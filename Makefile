@@ -10,11 +10,11 @@
 #  make depend - update header file dependancies
  
 CC = gcc
-CFLAGS = -Wall
+CFLAGS = -Wall -O3
 RM = rm
 
-SRC = sha256.c main.c
-INC = sha256.h
+SRC = sha256.c test_known_cases.c test_big_sha.c main.c
+INC = sha256.h test_known_cases.h test_big_sha.h
 
 OBJ = $(SRC:.c=.o)
 

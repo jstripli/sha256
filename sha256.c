@@ -19,9 +19,12 @@
 #define K_SIZE 64
 #define W_SIZE 64
 
+//#define DBG_PRINTF(...) printf(__VA_ARGS__)
+#define DBG_PRINTF(...)
+
 // Initalize hash values
 
-const uint32_t H_INI_VALUES[SHA256_HASH_SIZE] =
+const uint32_t HASH_INI_VALUES[SHA256_HASH_SIZE] =
 {
 	0x6a09e667,
 	0xbb67ae85,
@@ -187,22 +190,18 @@ uint64_t sha256_calc_num_chunks(uint64_t length_in_bits)
 }
 
 
-// each chunk is 16 32-bit works, or 512 bits
-#define CHUNK_SIZE 16
-
-
 // ------------------------------------------------------------------------
 // Helper Functions for 8 bit messages
 // ------------------------------------------------------------------------
 
-static unsigned int fill_chunk_uint8(char *msg, uint32_t *chunk, unsigned int rem_bytes, uint64_t msg_length_in_bits)
+unsigned int fill_chunk_uint8(uint8_t *msg, uint32_t *chunk, unsigned int rem_bytes, uint64_t msg_length_in_bits)
 {
 	uint32_t chk = 0;
 	unsigned int count = 0;
 	unsigned int rem_chunk_parts = CHUNK_SIZE;
 	unsigned int bytes_used = 0;
 	
-	printf("Chunk:\n");
+	DBG_PRINTF("Chunk:\n");
 	while ((rem_bytes) && (rem_chunk_parts))
 	{
 		chk <<= 8;
@@ -212,7 +211,7 @@ static unsigned int fill_chunk_uint8(char *msg, uint32_t *chunk, unsigned int re
 		count++;
 		if (count == 4)
 		{
-			printf("-- %08x\n", chk);
+			DBG_PRINTF("-- %08x\n", chk);
 			count = 0;
 			*chunk++ = chk;
 			rem_chunk_parts--;
@@ -243,7 +242,7 @@ static unsigned int fill_chunk_uint8(char *msg, uint32_t *chunk, unsigned int re
 		}
 
 		// add the last chunk part with any remaining bits, plus the 1 trailing bit, plus zero pad
-		printf("-- %08x\n", chk);
+		DBG_PRINTF("-- %08x\n", chk);
 		*chunk++ = chk;
 		rem_chunk_parts--;
 	}
@@ -251,7 +250,7 @@ static unsigned int fill_chunk_uint8(char *msg, uint32_t *chunk, unsigned int re
 	// Add space between the last data bits, but stop adding when we have two or fewer left
 	while (rem_chunk_parts > 2)
 	{
-		printf("-z %08x\n", 0);
+		DBG_PRINTF("-z %08x\n", 0);
 		*chunk++ = 0;
 		rem_chunk_parts--;
 	}
@@ -259,19 +258,21 @@ static unsigned int fill_chunk_uint8(char *msg, uint32_t *chunk, unsigned int re
 	// Add the message length if we have two spots left
 	if (rem_chunk_parts >= 2)
 	{
-		chk = (uint32_t)(msg_length_in_bits >> 32); printf("-# %08x\n", chk);
+		chk = (uint32_t)(msg_length_in_bits >> 32);
+        DBG_PRINTF("-# %08x\n", chk);
 		*chunk++ = (uint32_t)(msg_length_in_bits >> 32);
 		rem_chunk_parts--;
-		chk = (uint32_t)(msg_length_in_bits & 0xffffffff); printf("-# %08x\n", chk);
+		chk = (uint32_t)(msg_length_in_bits & 0xffffffff);
+        DBG_PRINTF("-# %08x\n", chk);
 		*chunk++ = (uint32_t)(msg_length_in_bits & 0xffffffff);
 		rem_chunk_parts--;
-		printf("  Chunk length: %llu\n", msg_length_in_bits);
+		DBG_PRINTF("  Chunk length: %llu\n", msg_length_in_bits);
 	}
 
 	// Zero out any spots remaining
 	while (rem_chunk_parts)
 	{
-		printf("-Z %08x\n", 0);
+		DBG_PRINTF("-Z %08x\n", 0);
 		*chunk++ = 0;
 		rem_chunk_parts--;
 	}
@@ -279,20 +280,42 @@ static unsigned int fill_chunk_uint8(char *msg, uint32_t *chunk, unsigned int re
 	return (bytes_used);
 }
 
+// return non-zero if the hashes differ, zero if they are the same
+
+unsigned int sha256_compare_hash(uint32_t *h1, uint32_t *h2)
+{
+	for (unsigned int k = 0; k < SHA256_HASH_SIZE; k++)
+	{
+		if (h1[k] != h2[k])
+	    {
+		    return(~0);
+		}
+	}
+
+    return (0);
+}
+
+void sha256_init_hash(uint32_t *hash)
+{
+	// Initialize hash values
+	memcpy(hash, HASH_INI_VALUES, SHA256_HASH_SIZE * sizeof(uint32_t));
+}
+
+
 // Accepts a pointer to a message, the size of the message in bytes, and a place to store
 // the 512 byte hash
  
-void sha256_char(char *msg, size_t num_bytes, uint32_t *hash)
+void sha256_uint8(uint8_t *msg, size_t num_bytes, uint32_t *hash)
 {
 	uint32_t chunk[CHUNK_SIZE];
 	uint64_t num_chunks;
 	uint64_t ch;
-	char *msg_ptr = msg;
+	uint8_t *msg_ptr = msg;
 	unsigned int rem_bytes = (unsigned int)num_bytes;
 	unsigned int bytes_used = 0;
 	
 	// Initialize hash values
-	memcpy(hash, H_INI_VALUES, SHA256_HASH_SIZE * sizeof(uint32_t));
+    sha256_init_hash(hash);
 
 	// Figure out how many 512-bit chunks we will need
 	num_chunks = sha256_calc_num_chunks(num_bytes * 8); // 8 bits per byte
@@ -308,6 +331,18 @@ void sha256_char(char *msg, size_t num_bytes, uint32_t *hash)
 		rem_bytes -= bytes_used;
 	}
 }
-	
+
+// Print a hash value
+
+void sha256_print_hash(uint32_t *h)
+{
+	printf("0x ");
+	for (unsigned int i = 0; i < SHA256_HASH_SIZE; i++)
+	{
+		printf("%08x", h[i]);
+	}
+	printf("\n");
+}
+
 
 
