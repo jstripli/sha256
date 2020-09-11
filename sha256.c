@@ -71,7 +71,7 @@ static inline uint32_t w_s1(uint32_t w)
 	return (rrot32(w,17) ^ rrot32(w,19) ^ (w >> 10));
 }
 
-static void init_w(uint32_t *w, uint32_t *chunk)
+static inline void init_w(uint32_t *w, uint32_t *chunk)
 {
 	unsigned int i;
 	
@@ -115,14 +115,107 @@ static inline uint32_t maj(uint32_t a, uint32_t b, uint32_t c)
 // Core processing function for a 512 bit chunk
 // ------------------------------------------------------------------------
 
-// Givin a current hash and a new 512 bit chunk, update the hash values
-// using the chunk.	 This function assumes that hash is a pointer to
-// an 8 value array and chunk is a pointer to a 16 value array
 
-// Optimization of this function will affect the overall speed of
-// the entire process
+// This macro works in a weird way, you really have to understand
+// what each iteration of the SHA algorithm is doing.
 
-void sha256_chunk(uint32_t *hash, uint32_t *chunk)
+// Normally the last two lines would be E = D + temp1 and A = temp1 + temp2, but
+// you have to set up the results for the next iteration of the unrolled loop
+
+#define QHASH(A,B,C,D,E,F,G,H) \
+	temp1 = H + s1(E) + ch(E,F,G) + *kp++ + *wp++; \
+	temp2 = s0(A) + maj(A,B,C); \
+    D = D + temp1; \
+	H = temp1 + temp2; \
+
+//! sha256_chunk_unroll - An unrolled version of the std function to update a hash with new values
+/**
+ * Givin a current hash and a new 512 bit chunk, update the hash values
+ * using the chunk.
+ *
+ * Optimization of this function will affect the overall speed of
+ * the entire process
+ *
+ * This version unrolls the inner loop by changing the definitions of the 
+ * registers used in the main loop.  The loop is about eight times longer
+ * and executes eight times, for a total of 64 calculations.  The loop
+ * uses a macro and avoids some register shifting between iterations.
+ * This should allow a clever compiler to reuse registers and speed up
+ * the calculation a bit over the std implementation.
+ *
+ * @param hash A pointer to an 8 value 32 bit array containting the
+ *             current hash.  This value is updated based on
+ *             the new chunk passed to it
+ *
+ * @param chunk A pointer to a 16 value 32 bit array (512 bits)
+ *              containing the values used to update the hash
+ */
+
+void sha256_chunk_unroll(uint32_t *hash, uint32_t *chunk)
+{
+	uint32_t w[W_SIZE];
+	register uint32_t a,b,c,d,e,f,g,h;
+	register uint32_t temp1, temp2;
+
+	register uint32_t *kp = (uint32_t *)k;
+	register uint32_t *wp = (uint32_t *)w;
+
+	// for each chunk
+
+	// create a 64 entry message schedule array w[0..63] of 32-bit words
+	init_w(w, chunk);
+
+	// Initialize working variables to current hash value
+	a = hash[0];
+	b = hash[1];
+	c = hash[2];
+	d = hash[3];
+	e = hash[4];
+	f = hash[5];
+	g = hash[6];
+	h = hash[7];
+
+	// Compression function main loop
+	for (unsigned int i = 0; i < 8; i++)
+	{
+		QHASH(a,b,c,d,e,f,g,h);
+		QHASH(h,a,b,c,d,e,f,g);
+		QHASH(g,h,a,b,c,d,e,f);
+		QHASH(f,g,h,a,b,c,d,e);
+		QHASH(e,f,g,h,a,b,c,d);
+		QHASH(d,e,f,g,h,a,b,c);
+		QHASH(c,d,e,f,g,h,a,b);
+		QHASH(b,c,d,e,f,g,h,a);
+	}
+
+	// Add the compressed chunk to the current hash value
+	hash[0] += a;
+	hash[1] += b;
+	hash[2] += c;
+	hash[3] += d;
+	hash[4] += e;
+	hash[5] += f;
+	hash[6] += g;
+	hash[7] += h;
+}
+
+//! sha256_chunk_std - A function to update a hash with new values
+/**
+ * Givin a current hash and a new 512 bit chunk, update the hash values
+ * using the chunk.
+ *
+ * Optimization of this function will affect the overall speed of
+ * the entire process
+ *
+ * @param hash A pointer to an 8 value 32 bit array containting the
+ *             current hash.  This value is updated based on
+ *             the new chunk passed to it
+ *
+ * @param chunk A pointer to a 16 value 32 bit array (512 bits)
+ *              containing the values used to update the hash
+ */
+
+void sha256_chunk_std(uint32_t *hash, uint32_t *chunk)
 {
 	uint32_t w[W_SIZE];
 	register uint32_t a,b,c,d,e,f,g,h;
@@ -170,6 +263,18 @@ void sha256_chunk(uint32_t *hash, uint32_t *chunk)
 	hash[7] += h;
 }
 
+//! sha256_calc_num_chunks - calculate the number of chunks given a message length
+/**
+ * Given a length of a message in bits, calculate the number
+ * of 512 bit chunks that will be needed to generate the hash
+ *
+ * The number of chunks is the bit length + 1 + 64, plus one more if the number of
+ * bits is not a multiple of 512
+ *
+ * @param length_in_bits The length of the message in bits
+ *
+ */
+
 uint64_t sha256_calc_num_chunks(uint64_t length_in_bits)
 {
 	unsigned int total_bits;
@@ -193,6 +298,32 @@ uint64_t sha256_calc_num_chunks(uint64_t length_in_bits)
 // ------------------------------------------------------------------------
 // Helper Functions for 8 bit messages
 // ------------------------------------------------------------------------
+
+//! fill_chunk_uint8 - fill the next chunk for a message
+
+/**
+ * Given a message, the remaining number of bytes to be hashed, and the
+ * overall length of the message in bits, fill the next 512 bit chunk to be
+ * hashed and return the number of message bytes processed to fill the chunk.
+ *
+ * This function is also called after all bytes are processed one more time to
+ * fill the last chunk with the length of the message.
+ *
+ * This function zero pads the chunk if needed and will always completely fill
+ * the chunk so that it is ready to go to the hashing function.
+ *
+ * @param msg A pointer to the next value in the message to be used to fill the chunk.
+ *            This value should advance through the string as it is processed.
+ *
+ * @param chunk A pointer to a chunk to be filled
+ *
+ * @param rem_bytes The number of the bytes in the message that still need to be processed.
+ *                  This value will decrease as the message is processed.
+ *
+ * @param msg_length_in_bits The total number of bits in the message.  This value should remain
+ *                           constant for all calls to this function for a given message
+ *
+ */
 
 unsigned int fill_chunk_uint8(uint8_t *msg, uint32_t *chunk, unsigned int rem_bytes, uint64_t msg_length_in_bits)
 {
@@ -280,7 +411,17 @@ unsigned int fill_chunk_uint8(uint8_t *msg, uint32_t *chunk, unsigned int rem_by
 	return (bytes_used);
 }
 
-// return non-zero if the hashes differ, zero if they are the same
+//! sha256_compare_hash - compare two hashes and return non-zero if they differ, zero otherwise
+/**
+ * Given two pointers to hashs, return non-zero if the hashs differ and zero otherwise
+ *
+ * @param h1 A pointer to the first hash
+ *
+ * @param h2 a poiter to the second hash
+ *
+ * @return non-zero if the hashs differ and zero if they are the same
+ *
+ */
 
 unsigned int sha256_compare_hash(uint32_t *h1, uint32_t *h2)
 {
@@ -295,6 +436,18 @@ unsigned int sha256_compare_hash(uint32_t *h1, uint32_t *h2)
     return (0);
 }
 
+//! sha256_init_hash - initialize the hash
+/**
+ * Given two pointers to hashs, return non-zero if the hashs differ and zero otherwise
+ *
+ * @param h1 A pointer to the first hash
+ *
+ * @param h2 a poiter to the second hash
+ *
+ * @return non-zero if the hashs differ and zero if they are the same
+ *
+ */
+
 void sha256_init_hash(uint32_t *hash)
 {
 	// Initialize hash values
@@ -304,7 +457,22 @@ void sha256_init_hash(uint32_t *hash)
 
 // Accepts a pointer to a message, the size of the message in bytes, and a place to store
 // the 512 byte hash
- 
+
+//! sha256_uint8 - calculate the hash given a string of uint8
+/**
+ * Given a pointer to an array of uint8 and the size of the array, calculate the hash
+ *
+ * @param msg A pointer to message to be hashed
+ *
+ * @param num_bytes The length of the message
+ *
+ * @param hash A pointer to a hash
+ *
+ * @return nothing
+ *
+ */
+
+
 void sha256_uint8(uint8_t *msg, size_t num_bytes, uint32_t *hash)
 {
 	uint32_t chunk[CHUNK_SIZE];

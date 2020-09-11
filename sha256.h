@@ -13,6 +13,9 @@
 
 // Core processing functions
 
+//#define sha256_chunk sha256_chunk_std
+#define sha256_chunk sha256_chunk_unroll
+
 extern void sha256_chunk(uint32_t *hash, uint32_t *chunk);
 
 extern uint64_t sha256_calc_num_chunks(uint64_t length_in_bits);
